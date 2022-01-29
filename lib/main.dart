@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:google_ml_kit/google_ml_kit.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+
+// TODO: test and link shared pref page
 
 List<String> splitStringByLength(String str, int length) =>
     [str.substring(0, length), str.substring(length)];
@@ -73,6 +79,16 @@ class TakePictureScreenState extends State<TakePictureScreen> {
     super.dispose();
   }
 
+  Future<File> getImageFileFromAssets(String path) async {
+    final byteData = await rootBundle.load('assets/$path');
+
+    final file = File('${(await getTemporaryDirectory()).path}/$path');
+    await file.writeAsBytes(byteData.buffer
+        .asUint8List(byteData.offsetInBytes, byteData.lengthInBytes));
+
+    return file;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -106,6 +122,9 @@ class TakePictureScreenState extends State<TakePictureScreen> {
             final image = await _controller.takePicture();
 
             // ML here
+            // final RecognisedText recognisedText = await textDetector
+            //     .processImage(InputImage.fromFilePath(image.path));
+
             final RecognisedText recognisedText = await textDetector
                 .processImage(InputImage.fromFilePath(image.path));
 
@@ -166,11 +185,78 @@ class _DisplayPictureScreenState extends State<DisplayPictureScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        child: Icon(Icons.save),
-        onPressed: () {
+        child: const Icon(Icons.save),
+        onPressed: () async {
           if (widget.recognizedString != 'No valid time detected') {
-            // TODO: save to sharedPref
+            String? previousDataString = null;
+            final prefs = await SharedPreferences.getInstance();
+            List<dynamic> previousDataList = [];
+
+            if (prefs.containsKey('timeData')) {
+              previousDataString = prefs.getString('timeData');
+              if (previousDataString != null) {
+                previousDataList =
+                    json.decode(previousDataString) as List<dynamic>;
+              }
+            }
+
+            previousDataList.add({
+              'date': DateTime.now().toIso8601String(),
+              'timeTaken': widget.recognizedString,
+            });
+
+            final timeData = json.encode(previousDataList);
+
+            await prefs.setString('timeData', timeData);
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => const DisplayResultsScreen(),
+              ),
+            );
           }
+        },
+      ),
+    );
+  }
+}
+
+class DisplayResultsScreen extends StatefulWidget {
+  const DisplayResultsScreen({Key? key}) : super(key: key);
+
+  @override
+  State<DisplayResultsScreen> createState() => _DisplayResultsScreenState();
+}
+
+class _DisplayResultsScreenState extends State<DisplayResultsScreen> {
+  late SharedPreferences sharedPrefs;
+
+  Future<List<dynamic>> _getPrefs() async {
+    sharedPrefs = await SharedPreferences.getInstance();
+    if (!sharedPrefs.containsKey('timeData')) {
+      return [];
+    } else {
+      final prefData = sharedPrefs.getString('timeData');
+      if (prefData == null) {
+        return [];
+      }
+
+      final timeData = json.decode(prefData) as List<dynamic>;
+
+      return timeData;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Pass result')),
+      body: FutureBuilder(
+        future: _getPrefs(),
+        builder: (context, snapshot) {
+          if (snapshot.hasData) {
+            return Text(snapshot.data.toString());
+          }
+          return const CircularProgressIndicator(); // or some other widget
         },
       ),
     );
